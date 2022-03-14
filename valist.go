@@ -5,75 +5,86 @@ import (
 	"math/big"
 )
 
-type Team struct {
-	// Name is the organization friendly name.
+type TeamMeta struct {
+	// Image is the URI of the team image
+	Image string `json:"image"`
+	// Name is the team friendly name.
 	Name string `json:"name"`
-	// Description is a short description of the organization.
+	// Description is a short description of the team.
 	Description string `json:"description"`
-	// Homepage is a link to the organization website.
-	Homepage string `json:"homepage"`
+	// ExternalURL is a link to the team website.
+	ExternalURL string `json:"external_url"`
 }
 
-type Project struct {
-	// Name is the repository friendly name.
+type ProjectMeta struct {
+	// Image is the URI of the project image
+	Image string `json:"image"`
+	// Name is the project friendly name.
 	Name string `json:"name"`
-	// Description is a short description of the repository.
+	// ShortDescription is a short description of the project.
+	ShortDescription string `json:"short_description"`
+	// Description is a description of the project.
 	Description string `json:"description"`
-	// Homepage is the website for the repository.
-	Homepage string `json:"homepage"`
-	// Repository is the source code url for the repository.
-	Repository string `json:"repository"`
+	// ExternalURL is a link to the project website.
+	ExternalURL string `json:"external_url"`
 }
 
-type Release struct {
-	// Name is the full release path.
+type ReleaseMeta struct {
+	// Image is the URI of the release image
+	Image string `json:"image"`
+	// Name is the unique release name.
 	Name string `json:"name"`
-	// Version is the release version.
-	Version string `json:"version"`
-	// Readme contains the readme contents.
-	Readme string `json:"readme"`
-	// License contains the license type.
-	License string `json:"license"`
-	// Dependencies contains a list of all dependencies.
-	Dependencies []string `json:"dependencies"`
-	// Artifacts is a mapping of names to artifacts.
-	Artifacts map[string]Artifact `json:"artifacts"`
+	// Description is a description of the release.
+	Description string `json:"description"`
+	// ExternalURL is a link to the release assets.
+	ExternalURL string `json:"external_url"`
+	// Licenses contains a list of licenses for the release.
+	Licenses []string `json:"licenses"`
 }
 
-// Artifact is file contained in a release.
-type Artifact struct {
-	// SHA256 is the sha256 of the file.
-	SHA256 string `json:"sha256"`
-	// Provider is the path to the artifact file.
-	Provider string `json:"provider"`
+type LicenseMeta struct {
+	// Image is the URI of the license image
+	Image string `json:"image"`
+	// Name is the unique license name.
+	Name string `json:"name"`
+	// Description is a description of the license.
+	Description string `json:"description"`
+	// ExternalURL is a link to the license website.
+	ExternalURL string `json:"external_url"`
 }
 
 // ContractAPI defines methods for interacting with smart contracts.
 type ContractAPI interface {
 	// CreateTeam creates a new team with the given members.
-	CreateTeam(ctx context.Context, teamName, metaURI string, members []string) error
+	CreateTeam(ctx context.Context, teamName, metaURI, beneficiary string, members []string) (TransactionAPI, error)
 	// CreateProject creates a new project. Requires the sender to be a member of the team.
-	CreateProject(ctx context.Context, teamName, projectName, metaURI string, members []string) error
+	CreateProject(ctx context.Context, teamName, projectName, metaURI string, members []string) (TransactionAPI, error)
 	// CreateRelease creates a new release. Requires the sender to be a member of the project.
-	CreateRelease(ctx context.Context, teamName, projectName, releaseName, metaURI string) error
+	CreateRelease(ctx context.Context, teamName, projectName, releaseName, metaURI string) (TransactionAPI, error)
+	// CreateLicense Creates a new License and establishes the mint price.
+	CreateLicense(ctx context.Context, teamName, projectName, licenseName, metaURI string, mintPrice *big.Int) (TransactionAPI, error)
+	// MintLicense mints a new license to a recipient.
+	MintLicense(ctx context.Context, teamName, projectName, licenseName, recipient string) (TransactionAPI, error)
 	// AddTeamMember adds a member to the team. Requires the sender to be a member of the team.
-	AddTeamMember(ctx context.Context, teamName string, address string) error
+	AddTeamMember(ctx context.Context, teamName string, address string) (TransactionAPI, error)
 	// RemoveTeamMember removes a member from the team. Requires the sender to be a member of the team.
-	RemoveTeamMember(ctx context.Context, teamName string, address string) error
+	RemoveTeamMember(ctx context.Context, teamName string, address string) (TransactionAPI, error)
 	// AddProjectMemeber adds a member to the project. Requires the sender to be a member of the team.
-	AddProjectMember(ctx context.Context, teamName, projectName string, address string) error
+	AddProjectMember(ctx context.Context, teamName, projectName string, address string) (TransactionAPI, error)
 	// RemoveProjectMember removes a member from the project. Requires the sender to be a member of the team.
-	RemoveProjectMember(ctx context.Context, teamName, projectName string, address string) error
+	RemoveProjectMember(ctx context.Context, teamName, projectName string, address string) (TransactionAPI, error)
 	// SetTeamMetaURI sets the team metadata content ID. Requires the sender to be a member of the team.
-	SetTeamMetaURI(ctx context.Context, teamName, metaURI string) error
+	SetTeamMetaURI(ctx context.Context, teamName, metaURI string) (TransactionAPI, error)
 	// SetProjectMetaURI sets the project metadata content ID. Requires the sender to be a member of the team.
-	SetProjectMetaURI(ctx context.Context, teamName, projectName, metaURI string) error
+	SetProjectMetaURI(ctx context.Context, teamName, projectName, metaURI string) (TransactionAPI, error)
+	// SetTeamBeneficiary sets the team beneficiary to the new address.
+	SetTeamBeneficiary(ctx context.Context, teamName, beneficiary string) (TransactionAPI, error)
 	// ApproveRelease approves the release by adding the sender's address to the approvers list.
 	// The sender's address will be removed from the rejectors list if it exists.
-	ApproveRelease(ctx context.Context, teamName, projectName, releaseName string) error
+	ApproveRelease(ctx context.Context, teamName, projectName, releaseName string) (TransactionAPI, error)
 	// RejectRelease rejects the release by adding the sender's address to the rejectors list.
 	// The sender's address will be removed from the approvers list if it exists.
-	RejectRelease(ctx context.Context, teamName, projectName, releaseName string) error
+	RejectRelease(ctx context.Context, teamName, projectName, releaseName string) (TransactionAPI, error)
 	// GetLatestReleaseName returns the latest release name.
 	GetLatestReleaseName(ctx context.Context, teamName, projectName string) (string, error)
 	// GetTeamMetaURI returns the team metadata URI.
@@ -82,12 +93,16 @@ type ContractAPI interface {
 	GetProjectMetaURI(ctx context.Context, teamName, projectName string) (string, error)
 	// GetReleaseMetaURI returns the release metadata URI.
 	GetReleaseMetaURI(ctx context.Context, teamName, projectName, releaseName string) (string, error)
+	// GetLicenseMetaURI returns the license metadata URI.
+	GetLicenseMetaURI(ctx context.Context, teamName, projectName, licenseName string) (string, error)
 	// GetTeamNames returns a paginated list of team names.
 	GetTeamNames(ctx context.Context, page *big.Int, size *big.Int) ([]string, error)
 	// GetProjectNames returns a paginated list of project names.
 	GetProjectNames(ctx context.Context, teamName string, page *big.Int, size *big.Int) ([]string, error)
 	// GetReleaseNames returns a paginated list of release names.
 	GetReleaseNames(ctx context.Context, teamName, projectName string, page *big.Int, size *big.Int) ([]string, error)
+	// GetLicenseNames returns a paginated list of license names.
+	GetLicenseNames(ctx context.Context, teamName, projectName string, page *big.Int, size *big.Int) ([]string, error)
 	// GetTeamMembers returns a paginated list of team members.
 	GetTeamMembers(ctx context.Context, teamName string, page *big.Int, size *big.Int) ([]string, error)
 	// GetProjectMembers returns a paginated list of project members.
@@ -96,24 +111,29 @@ type ContractAPI interface {
 	GetReleaseApprovers(ctx context.Context, teamName string, projectName, releaseName string, page *big.Int, size *big.Int) ([]string, error)
 	// GetReleaseRejectors returns a paginated list of release rejectors.
 	GetReleaseRejectors(ctx context.Context, teamName string, projectName, releaseName string, page *big.Int, size *big.Int) ([]string, error)
+	// GetLicense price returns the mint price of the license.
+	GetLicensePrice(ctx context.Context, teamName, projectName, licenseName string) (*big.Int, error)
+	// GetTeamBeneficiary returns the team beneficiary address.
+	GetTeamBeneficiary(ctx context.Context, teamName string) (string, error)
+	// GetTeamID generates teamID from name.
+	GetTeamID(ctx context.Context, teamName string) (*big.Int, error)
+	// GetProjectID generates projectID from team ID and name.
+	GetProjectID(ctx context.Context, teamID *big.Int, projectName string) (*big.Int, error)
+	// GetReleaseID generates releaseID from project ID and name.
+	GetReleaseID(ctx context.Context, projectID *big.Int, releaseName string) (*big.Int, error)
+	// GetLicenseID generates licenseID from project ID and name.
+	GetLicenseID(ctx context.Context, projectID *big.Int, licenseName string) (*big.Int, error)
 }
 
 // StorageAPI defines methods for reading and writing data.
 type StorageAPI interface {
-	// ReadTeamMeta returns team metadata from storage.
-	ReadTeamMeta(ctx context.Context, metaURI string) (*Team, error)
-	// ReadProjectMeta returns project metadata from storage.
-	ReadProjectMeta(ctx context.Context, metaURI string) (*Project, error)
-	// ReadReleaseMeta returns release metadata from storage.
-	ReadReleaseMeta(ctx context.Context, metaURI string) (*Release, error)
-	// WriteTeamMeta writes team metadata to storage.
-	WriteTeamMeta(ctx context.Context, team *Team) (string, error)
-	// WriteProjectMeta writes project metadata to storage.
-	WriteProjectMeta(ctx context.Context, project *Project) (string, error)
-	// WriteReleaseMeta writes release metadata to storage.
-	WriteReleaseMeta(ctx context.Context, release *Release) (string, error)
-	// Read returns the contents of the given path.
-	Read(ctx context.Context, uri string) ([]byte, error)
-	// Write writes the contents to storage.
-	Write(ctx context.Context, data []byte) (string, error)
+	// WriteJSON writes JSON data to storage.
+	WriteJSON(ctx context.Context, data []byte) (string, error)
+}
+
+type TransactionAPI interface {
+	// Wait waits until the transaction is finalized.
+	Wait(ctx context.Context) error
+	// Hash returns the transaction hash.
+	Hash() string
 }
