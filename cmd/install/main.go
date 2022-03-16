@@ -2,18 +2,17 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"os"
 	"strings"
 
-	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
 	httpapi "github.com/ipfs/go-ipfs-http-client"
 
 	"github.com/valist-io/valist-go/client"
 	"github.com/valist-io/valist-go/contract"
 	"github.com/valist-io/valist-go/storage"
+	"github.com/valist-io/valist-go/util"
 )
 
 const help = `
@@ -25,7 +24,7 @@ Usage:
 	valist-install <path>
 
 Examples:
-	valist-install ipfs/go-ipfs/v0.11.0/darwin-arm64 > /usr/local/bin/ipfs
+	valist-install ipfs/go-ipfs/v0.11.0
 `
 
 // Feel free to swap these URLs for your provider of choice.
@@ -37,55 +36,46 @@ const (
 
 func main() {
 	if len(os.Args) != 2 {
-		fmt.Fprintln(os.Stderr, help)
-		os.Exit(1)
+		panic(help)
 	}
-	path := strings.SplitN(os.Args[1], "/", 4)
-	if len(path) != 4 {
-		fmt.Fprintln(os.Stderr, help)
-		os.Exit(1)
-	}
-
-	rpc, err := ethclient.Dial(rpcURL)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%v", err)
-		os.Exit(1)
-	}
-	evm, err := contract.NewEVM(common.HexToAddress("0x0"), rpc)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%v", err)
-		os.Exit(1)
-	}
-	api, err := httpapi.NewURLApiWithClient(ipfsURL, &http.Client{})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%v", err)
-		os.Exit(1)
+	path := strings.SplitN(os.Args[1], "/", 3)
+	if len(path) != 3 {
+		panic(help)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	ipfs := storage.NewIPFS(api)
+	rpc, err := ethclient.DialContext(ctx, rpcURL)
+	if err != nil {
+		panic(err)
+	}
+	chainID, err := rpc.ChainID(ctx)
+	if err != nil {
+		panic(err)
+	}
+	evm, err := contract.NewEVM(rpc, chainID, nil)
+	if err != nil {
+		panic(err)
+	}
+	api, err := httpapi.NewURLApiWithClient(ipfsURL, &http.Client{})
+	if err != nil {
+		panic(err)
+	}
+
+	ipfs := storage.NewIPFS(api, ipfsURL)
 	valist := client.NewClient(evm, ipfs)
 
-	release, err := valist.GetRelease(ctx, path[0], path[1], path[2])
+	release, err := valist.GetReleaseMeta(ctx, path[0], path[1], path[2])
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%v", err)
-		os.Exit(1)
+		panic(err)
 	}
-	artifact, ok := release.Artifacts[path[3]]
-	if !ok {
-		fmt.Printf("artifact not found: %s", path[3])
-		os.Exit(1)
-	}
-	data, err := valist.Storage.Read(ctx, artifact.Provider)
+	data, err := util.Fetch(release.ExternalURL)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%v", err)
-		os.Exit(1)
+		panic(err)
 	}
 	_, err = os.Stdout.Write(data)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%v", err)
-		os.Exit(1)
+		panic(err)
 	}
 }

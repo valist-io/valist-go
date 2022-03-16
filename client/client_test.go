@@ -12,20 +12,25 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ipfs/go-ipfs/core/coreapi"
+	"github.com/ipfs/go-ipfs/core/corehttp"
 	coremock "github.com/ipfs/go-ipfs/core/mock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	valist "github.com/valist-io/valist-go"
 	"github.com/valist-io/valist-go/contract"
+	license_contract "github.com/valist-io/valist-go/contract/license"
 	valist_contract "github.com/valist-io/valist-go/contract/valist"
 	"github.com/valist-io/valist-go/storage"
 )
 
 var chainID = big.NewInt(1337)
 
+// hard coded private key for deterministic deploys
+const privateKey = "289c2857d4598e37fb9647507e47a309d6133539bf21a8b9cb6df88fd5232032"
+
 func TestClient(t *testing.T) {
-	priv, err := crypto.GenerateKey()
+	priv, err := crypto.HexToECDSA(privateKey)
 	require.NoError(t, err, "failed to generate private key")
 
 	contract, err := setupEVM(priv)
@@ -34,73 +39,92 @@ func TestClient(t *testing.T) {
 	storage, err := setupIPFS()
 	require.NoError(t, err, "failed to create ipfs storage")
 
-	// set the signer for transactions
-	contract.Signer(priv, chainID)
 	client := NewClient(contract, storage)
-
 	address := crypto.PubkeyToAddress(priv.PublicKey)
 	members := []string{address.Hex()}
 
-	team := &valist.Team{
+	team := &valist.TeamMeta{
+		Image:       "https://gateway.valist.io/ipfs/Qm456",
 		Name:        "valist",
 		Description: "Web3 digital distribution",
-		Homepage:    "https://valist.io",
+		ExternalURL: "https://valist.io",
 	}
 
-	project := &valist.Project{
+	project := &valist.ProjectMeta{
+		Image:       "https://gateway.valist.io/ipfs/Qm456",
 		Name:        "sdk",
 		Description: "Valist Typescript SDK",
-		Homepage:    "https://docs.valist.io",
-		Repository:  "https://github.com/valist-io/valist-js",
+		ExternalURL: "https://github.com/valist-io/valist-js",
 	}
 
-	artifact := valist.Artifact{
-		Provider: "Qm123",
+	release := &valist.ReleaseMeta{
+		Image:       "https://gateway.valist.io/ipfs/Qm456",
+		Name:        "sdk@v0.5.0",
+		Description: "Release v0.5.0",
+		ExternalURL: "https://gateway.valist.io/ipfs/Qm123",
 	}
 
-	release := &valist.Release{
-		Name:    "sdk@v0.5.0",
-		Version: "v0.5.0",
-		Artifacts: map[string]valist.Artifact{
-			"package.json": artifact,
-		},
+	license := &valist.LicenseMeta{
+		Image:       "https://gateway.valist.io/ipfs/Qm789",
+		Name:        "Valist Pro",
+		Description: "Access pro tier features on Valist",
+		ExternalURL: "https://valist.io/pro",
 	}
 
-	err = client.CreateTeam(context.Background(), "valist", team, members)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tx, err := client.CreateTeam(ctx, "valist", team, address.Hex(), members)
 	require.NoError(t, err, "failed to create team")
+	tx.Wait(ctx)
 
-	err = client.CreateProject(context.Background(), "valist", "sdk", project, members)
+	tx, err = client.CreateProject(ctx, "valist", "sdk", project, members)
 	require.NoError(t, err, "failed to create project")
+	tx.Wait(ctx)
 
-	err = client.CreateRelease(context.Background(), "valist", "sdk", "v0.5.0", release)
+	tx, err = client.CreateRelease(ctx, "valist", "sdk", "v0.5.0", release)
 	require.NoError(t, err, "failed to create release")
+	tx.Wait(ctx)
 
-	otherTeam, err := client.GetTeam(context.Background(), "valist")
+	tx, err = client.CreateLicense(ctx, "valist", "sdk", "pro", license, big.NewInt(1000))
+	require.NoError(t, err, "failed to create license")
+	tx.Wait(ctx)
+
+	otherTeam, err := client.GetTeamMeta(ctx, "valist")
 	require.NoError(t, err, "failed to get team")
+	assert.Equal(t, team, otherTeam)
 
-	assert.Equal(t, team.Name, otherTeam.Name)
-	assert.Equal(t, team.Description, otherTeam.Description)
-	assert.Equal(t, team.Homepage, otherTeam.Homepage)
-
-	otherProject, err := client.GetProject(context.Background(), "valist", "sdk")
+	otherProject, err := client.GetProjectMeta(ctx, "valist", "sdk")
 	require.NoError(t, err, "failed to get project")
+	assert.Equal(t, project, otherProject)
 
-	assert.Equal(t, project.Name, otherProject.Name)
-	assert.Equal(t, project.Description, otherProject.Description)
-	assert.Equal(t, project.Homepage, otherProject.Homepage)
-	assert.Equal(t, project.Repository, otherProject.Repository)
-
-	otherRelease, err := client.GetRelease(context.Background(), "valist", "sdk", "v0.5.0")
+	otherRelease, err := client.GetReleaseMeta(ctx, "valist", "sdk", "v0.5.0")
 	require.NoError(t, err, "failed to get release")
+	assert.Equal(t, release, otherRelease)
 
-	assert.Equal(t, release.Name, otherRelease.Name)
-	assert.Equal(t, release.Version, otherRelease.Version)
-	assert.Equal(t, len(release.Artifacts), len(otherRelease.Artifacts))
+	otherLicense, err := client.GetLicenseMeta(ctx, "valist", "sdk", "pro")
+	require.NoError(t, err, "failed to get license")
+	assert.Equal(t, license, otherLicense)
 
-	otherArtifact, ok := otherRelease.Artifacts["package.json"]
-	require.True(t, ok)
+	beneficiary, err := client.Contract.GetTeamBeneficiary(ctx, "valist")
+	require.NoError(t, err, "failed to get team beneficiary")
+	assert.Equal(t, beneficiary, address.Hex())
 
-	assert.Equal(t, artifact.Provider, otherArtifact.Provider)
+	tx, err = client.Contract.SetTeamBeneficiary(ctx, "valist", "0x9399BB24DBB5C4b782C70c2969F58716Ebbd6a3b")
+	require.NoError(t, err, "failed to set team beneficiary")
+	tx.Wait(ctx)
+
+	otherBeneficiary, err := client.Contract.GetTeamBeneficiary(ctx, "valist")
+	require.NoError(t, err, "failed to get team beneficiary")
+	assert.Equal(t, otherBeneficiary, "0x9399BB24DBB5C4b782C70c2969F58716Ebbd6a3b")
+
+	licensePrice, err := client.Contract.GetLicensePrice(ctx, "valist", "sdk", "pro")
+	require.NoError(t, err, "failed to get license price")
+	assert.Equal(t, licensePrice, big.NewInt(1000))
+
+	tx, err = client.Contract.MintLicense(ctx, "valist", "sdk", "pro", address.Hex())
+	require.NoError(t, err, "failed to mint license")
+	tx.Wait(ctx)
 }
 
 func setupEVM(private *ecdsa.PrivateKey) (*contract.EVM, error) {
@@ -120,8 +144,12 @@ func setupEVM(private *ecdsa.PrivateKey) (*contract.EVM, error) {
 		return nil, err
 	}
 
-	// deploy the contract
+	// deploy the contracts
 	address, _, _, err := valist_contract.DeployValist(txopts, backend, common.HexToAddress("0x0"))
+	if err != nil {
+		return nil, err
+	}
+	_, _, _, err = license_contract.DeployLicense(txopts, backend, address, common.HexToAddress("0x0"))
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +157,7 @@ func setupEVM(private *ecdsa.PrivateKey) (*contract.EVM, error) {
 	// mine the transactions
 	backend.Commit()
 
-	return contract.NewEVM(address, backend)
+	return contract.NewEVM(backend, chainID, private)
 }
 
 func setupIPFS() (*storage.IPFS, error) {
@@ -141,5 +169,9 @@ func setupIPFS() (*storage.IPFS, error) {
 	if err != nil {
 		return nil, err
 	}
-	return storage.NewIPFS(api), nil
+
+	// start the http server
+	go corehttp.ListenAndServe(node, "/ip4/127.0.0.1/tcp/9090", corehttp.GatewayOption(true, "/ipfs", "/ipns"))
+
+	return storage.NewIPFS(api, "http://localhost:9090"), nil
 }
