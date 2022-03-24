@@ -26,7 +26,7 @@ import (
 )
 
 var DefaultOptions = &Options{
-	EthereumRpc: "https://rpc.valit.io",
+	EthereumRpc: "https://rpc.valist.io",
 	IPFSUrl:     "https://gateway.valist.io",
 }
 
