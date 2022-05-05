@@ -1,6 +1,6 @@
 package valist
 
-type TeamMeta struct {
+type AccountMeta struct {
 	// Image is the URI of the team image
 	Image string `json:"image"`
 	// Name is the team friendly name.
@@ -22,6 +22,19 @@ type ProjectMeta struct {
 	Description string `json:"description"`
 	// ExternalURL is a link to the project website.
 	ExternalURL string `json:"external_url"`
+	// Type is the project type.
+	Type string `json:"type"`
+	// Tags is a list of keywords.
+	Tags []string `json:"tags"`
+	// Gallery contains a list of items for the gallery.
+	Gallery []GalleryItem `json:"gallery"`
+}
+
+type GalleryItem struct {
+	Name    string `json:"name"`
+	Src     string `json:"src"`
+	Type    string `json:"type"`
+	Preview string `json:"preview"`
 }
 
 type ReleaseMeta struct {
@@ -32,18 +45,5 @@ type ReleaseMeta struct {
 	// Description is a description of the release.
 	Description string `json:"description"`
 	// ExternalURL is a link to the release assets.
-	ExternalURL string `json:"external_url"`
-	// Licenses contains a list of licenses for the release.
-	Licenses []string `json:"licenses"`
-}
-
-type LicenseMeta struct {
-	// Image is the URI of the license image
-	Image string `json:"image"`
-	// Name is the unique license name.
-	Name string `json:"name"`
-	// Description is a description of the license.
-	Description string `json:"description"`
-	// ExternalURL is a link to the license website.
 	ExternalURL string `json:"external_url"`
 }

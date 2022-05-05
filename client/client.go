@@ -19,34 +19,45 @@ import (
 	"github.com/ipfs/interface-go-ipfs-core/options"
 
 	valist "github.com/valist-io/valist-go"
-	"github.com/valist-io/valist-go/contract"
-	license_contract "github.com/valist-io/valist-go/contract/license"
-	valist_contract "github.com/valist-io/valist-go/contract/valist"
-	"github.com/valist-io/valist-go/util"
+	"github.com/valist-io/valist-go/contracts"
+	erc20_contract "github.com/valist-io/valist-go/contracts/erc20"
+	license_contract "github.com/valist-io/valist-go/contracts/license"
+	registry_contract "github.com/valist-io/valist-go/contracts/registry"
+	"github.com/valist-io/valist-go/utils"
 )
 
 var DefaultOptions = &Options{
 	EthereumRpc: "https://rpc.valist.io",
-	IPFSUrl:     "https://gateway.valist.io",
+	IpfsHost:    "https://pin.valist.io",
+	IpfsGateway: "https://gateway.valist.io",
 }
 
 type Options struct {
-	// EthereumRpc is the url to use for ethereum rpc calls and transactions.
+	// EthereumRpc is the URL of the ethereum RPC.
 	EthereumRpc string
-	// IPFSUrl is the url to use for ipfs storage writes.
-	IPFSUrl string
+	// IpfsHost is the URL of the IPFS host.
+	IpfsHost string
+	// IpfsGateway is the URL of the IPFS gateway.
+	IpfsGateway string
 	// PrivateKey is the key to use for signing transactions.
 	PrivateKey *ecdsa.PrivateKey
 }
 
+type backend interface {
+	bind.ContractBackend
+	bind.DeployBackend
+}
+
 type Client struct {
-	rpc     bind.DeployBackend
-	ipfs    coreiface.CoreAPI
-	gateway string
-	private *ecdsa.PrivateKey
-	chainID *big.Int
-	valist  *valist_contract.Valist
-	license *license_contract.License
+	rpc             backend
+	ipfs            coreiface.CoreAPI
+	gateway         string
+	private         *ecdsa.PrivateKey
+	chainID         *big.Int
+	registry        *registry_contract.Registry
+	license         *license_contract.License
+	registryAddress common.Address
+	licenseAddress  common.Address
 }
 
 // NewClient returns a client using the given contract and storage providers.
@@ -54,7 +65,7 @@ func NewClient(ctx context.Context, opts *Options) (*Client, error) {
 	if opts == nil {
 		opts = DefaultOptions
 	}
-	ipfs, err := httpapi.NewURLApiWithClient(opts.IPFSUrl, &http.Client{})
+	ipfs, err := httpapi.NewURLApiWithClient(opts.IpfsHost, &http.Client{})
 	if err != nil {
 		return nil, err
 	}
@@ -66,113 +77,38 @@ func NewClient(ctx context.Context, opts *Options) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	valistAddress, ok := contract.ValistAddresses[chainID.String()]
+	registryAddress, ok := contracts.RegistryAddresses[chainID.String()]
 	if !ok {
 		return nil, fmt.Errorf("chain with id=%d not supported", chainID)
 	}
-	licenseAddress, ok := contract.LicenseAddresses[chainID.String()]
+	licenseAddress, ok := contracts.LicenseAddresses[chainID.String()]
 	if !ok {
 		return nil, fmt.Errorf("chain with id=%d not supported", chainID)
 	}
-	valistContract, err := valist_contract.NewValist(valistAddress, rpc)
+	registry, err := registry_contract.NewRegistry(registryAddress, rpc)
 	if err != nil {
 		return nil, err
 	}
-	licenseContract, err := license_contract.NewLicense(licenseAddress, rpc)
+	license, err := license_contract.NewLicense(licenseAddress, rpc)
 	if err != nil {
 		return nil, err
 	}
 	return &Client{
-		rpc:     rpc,
-		ipfs:    ipfs,
-		gateway: opts.IPFSUrl,
-		private: opts.PrivateKey,
-		chainID: chainID,
-		valist:  valistContract,
-		license: licenseContract,
+		rpc:             rpc,
+		ipfs:            ipfs,
+		gateway:         opts.IpfsGateway,
+		private:         opts.PrivateKey,
+		chainID:         chainID,
+		registry:        registry,
+		license:         license,
+		registryAddress: registryAddress,
+		licenseAddress:  licenseAddress,
 	}, nil
 }
 
-// GetTeamMeta returns the metadata of the team with the given name.
-func (c *Client) GetTeamMeta(ctx context.Context, teamName string) (*valist.TeamMeta, error) {
-	metaURI, err := c.GetTeamMetaURI(ctx, teamName)
-	if err != nil {
-		return nil, err
-	}
-	data, err := util.Fetch(metaURI)
-	if err != nil {
-		return nil, err
-	}
-	var team valist.TeamMeta
-	if err := json.Unmarshal(data, &team); err != nil {
-		return nil, err
-	}
-	return &team, nil
-}
-
-// GetProjectMeta returns the metadata of the project with the given name.
-func (c *Client) GetProjectMeta(ctx context.Context, teamName, projectName string) (*valist.ProjectMeta, error) {
-	metaURI, err := c.GetProjectMetaURI(ctx, teamName, projectName)
-	if err != nil {
-		return nil, err
-	}
-	data, err := util.Fetch(metaURI)
-	if err != nil {
-		return nil, err
-	}
-	var project valist.ProjectMeta
-	if err := json.Unmarshal(data, &project); err != nil {
-		return nil, err
-	}
-	return &project, nil
-}
-
-// GetReleaseMeta returns the metadata of the release with the given name.
-func (c *Client) GetReleaseMeta(ctx context.Context, teamName, projectName, releaseName string) (*valist.ReleaseMeta, error) {
-	metaURI, err := c.GetReleaseMetaURI(ctx, teamName, projectName, releaseName)
-	if err != nil {
-		return nil, err
-	}
-	data, err := util.Fetch(metaURI)
-	if err != nil {
-		return nil, err
-	}
-	var release valist.ReleaseMeta
-	if err := json.Unmarshal(data, &release); err != nil {
-		return nil, err
-	}
-	return &release, nil
-}
-
-// GetLatestReleaseMeta returns the latest release.
-func (c *Client) GetLatestReleaseMeta(ctx context.Context, teamName, projectName string) (*valist.ReleaseMeta, error) {
-	releaseName, err := c.GetLatestReleaseName(ctx, teamName, projectName)
-	if err != nil {
-		return nil, err
-	}
-	return c.GetReleaseMeta(ctx, teamName, projectName, releaseName)
-}
-
-// GetLicenseMeta returns the metadata of the license with the given name.
-func (c *Client) GetLicenseMeta(ctx context.Context, teamName, projectName, licenseName string) (*valist.LicenseMeta, error) {
-	metaURI, err := c.GetLicenseMetaURI(ctx, teamName, projectName, licenseName)
-	if err != nil {
-		return nil, err
-	}
-	data, err := util.Fetch(metaURI)
-	if err != nil {
-		return nil, err
-	}
-	var release valist.LicenseMeta
-	if err := json.Unmarshal(data, &release); err != nil {
-		return nil, err
-	}
-	return &release, nil
-}
-
-// CreateTeam creates a team with the given name, metadata, and members.
-func (c *Client) CreateTeam(ctx context.Context, teamName string, team *valist.TeamMeta, beneficiary string, members []string) (*types.Transaction, error) {
-	data, err := json.Marshal(team)
+// CreateAccount creates an account with the given name, metadata, and members.
+func (c *Client) CreateAccount(ctx context.Context, name string, account *valist.AccountMeta, members []string) (*types.Transaction, error) {
+	data, err := json.Marshal(account)
 	if err != nil {
 		return nil, err
 	}
@@ -188,11 +124,11 @@ func (c *Client) CreateTeam(ctx context.Context, teamName string, team *valist.T
 	if err != nil {
 		return nil, err
 	}
-	return c.valist.CreateTeam(txopts, teamName, metaURI, common.HexToAddress(beneficiary), addresses)
+	return c.registry.CreateAccount(txopts, name, metaURI, addresses)
 }
 
-// CreateProject creates a project under the team with the given name, metadata, and members.
-func (c *Client) CreateProject(ctx context.Context, teamName, projectName string, project *valist.ProjectMeta, members []string) (*types.Transaction, error) {
+// CreateProject creates a project under the account with the given id, metadata, and members.
+func (c *Client) CreateProject(ctx context.Context, accountID *big.Int, name string, project *valist.ProjectMeta, members []string) (*types.Transaction, error) {
 	data, err := json.Marshal(project)
 	if err != nil {
 		return nil, err
@@ -209,11 +145,11 @@ func (c *Client) CreateProject(ctx context.Context, teamName, projectName string
 	if err != nil {
 		return nil, err
 	}
-	return c.valist.CreateProject(txopts, teamName, projectName, metaURI, addresses)
+	return c.registry.CreateProject(txopts, accountID, name, metaURI, addresses)
 }
 
 // CreateRelease creates a release under the project with the given name and metadata.
-func (c *Client) CreateRelease(ctx context.Context, teamName, projectName, releaseName string, release *valist.ReleaseMeta) (*types.Transaction, error) {
+func (c *Client) CreateRelease(ctx context.Context, projectID *big.Int, name string, release *valist.ReleaseMeta) (*types.Transaction, error) {
 	data, err := json.Marshal(release)
 	if err != nil {
 		return nil, err
@@ -226,12 +162,135 @@ func (c *Client) CreateRelease(ctx context.Context, teamName, projectName, relea
 	if err != nil {
 		return nil, err
 	}
-	return c.valist.CreateRelease(txopts, teamName, projectName, releaseName, metaURI)
+	return c.registry.CreateRelease(txopts, projectID, name, metaURI)
 }
 
-// CreateLicense creates a license under the project with the given name and metadata.
-func (c *Client) CreateLicense(ctx context.Context, teamName, projectName, licenseName string, license *valist.LicenseMeta, mintPrice *big.Int) (*types.Transaction, error) {
-	data, err := json.Marshal(license)
+// GetAccountMeta returns the metadata of the account with the given ID.
+func (c *Client) GetAccountMeta(ctx context.Context, accountID *big.Int) (*valist.AccountMeta, error) {
+	metaURI, err := c.registry.MetaByID(c.callopts(ctx), accountID)
+	if err != nil {
+		return nil, err
+	}
+	data, err := utils.Fetch(metaURI)
+	if err != nil {
+		return nil, err
+	}
+	var account valist.AccountMeta
+	if err := json.Unmarshal(data, &account); err != nil {
+		return nil, err
+	}
+	return &account, nil
+}
+
+// GetProjectMeta returns the metadata of the project with the given ID.
+func (c *Client) GetProjectMeta(ctx context.Context, projectID *big.Int) (*valist.ProjectMeta, error) {
+	metaURI, err := c.registry.MetaByID(c.callopts(ctx), projectID)
+	if err != nil {
+		return nil, err
+	}
+	data, err := utils.Fetch(metaURI)
+	if err != nil {
+		return nil, err
+	}
+	var project valist.ProjectMeta
+	if err := json.Unmarshal(data, &project); err != nil {
+		return nil, err
+	}
+	return &project, nil
+}
+
+// GetReleaseMeta returns the metadata of the release with the given ID.
+func (c *Client) GetReleaseMeta(ctx context.Context, releaseID *big.Int) (*valist.ReleaseMeta, error) {
+	metaURI, err := c.registry.MetaByID(c.callopts(ctx), releaseID)
+	if err != nil {
+		return nil, err
+	}
+	data, err := utils.Fetch(metaURI)
+	if err != nil {
+		return nil, err
+	}
+	var release valist.ReleaseMeta
+	if err := json.Unmarshal(data, &release); err != nil {
+		return nil, err
+	}
+	return &release, nil
+}
+
+// GetLatestReleaseMeta returns the latest release.
+func (c *Client) GetLatestReleaseMeta(ctx context.Context, projectID *big.Int) (*valist.ReleaseMeta, error) {
+	releaseID, err := c.GetLatestReleaseID(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	return c.GetReleaseMeta(ctx, releaseID)
+}
+
+// AccountExists returns true if the account with the given ID exists.
+func (c *Client) AccountExists(ctx context.Context, accountID *big.Int) (bool, error) {
+	metaURI, err := c.registry.MetaByID(c.callopts(ctx), accountID)
+	if err != nil {
+		return false, err
+	}
+	return metaURI != "", nil
+}
+
+// ProjectExists returns true if the project with the given ID exists.
+func (c *Client) ProjectExists(ctx context.Context, projectID *big.Int) (bool, error) {
+	metaURI, err := c.registry.MetaByID(c.callopts(ctx), projectID)
+	if err != nil {
+		return false, err
+	}
+	return metaURI != "", nil
+}
+
+// ReleaseExists returns true if the release with the given ID exists.
+func (c *Client) ReleaseExists(ctx context.Context, releaseID *big.Int) (bool, error) {
+	metaURI, err := c.registry.MetaByID(c.callopts(ctx), releaseID)
+	if err != nil {
+		return false, err
+	}
+	return metaURI != "", nil
+}
+
+// AddAccountMember adds a member to the account. Requires the sender to be a member of the account.
+func (c *Client) AddAccountMember(ctx context.Context, accountID *big.Int, address string) (*types.Transaction, error) {
+	txopts, err := c.txopts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return c.registry.AddAccountMember(txopts, accountID, common.HexToAddress(address))
+}
+
+// RemoveAccountMember removes a member from the account. Requires the sender to be a member of the account.
+func (c *Client) RemoveAccountMember(ctx context.Context, accountID *big.Int, address string) (*types.Transaction, error) {
+	txopts, err := c.txopts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return c.registry.RemoveAccountMember(txopts, accountID, common.HexToAddress(address))
+}
+
+// AddProjectMemeber adds a member to the project. Requires the sender to be a member of the account.
+func (c *Client) AddProjectMember(ctx context.Context, projectID *big.Int, address string) (*types.Transaction, error) {
+	txopts, err := c.txopts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return c.registry.AddProjectMember(txopts, projectID, common.HexToAddress(address))
+}
+
+// RemoveProjectMember removes a member from the project. Requires the sender to be a member of the account.
+func (c *Client) RemoveProjectMember(ctx context.Context, projectID *big.Int, address string) (*types.Transaction, error) {
+	txopts, err := c.txopts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return c.registry.RemoveProjectMember(txopts, projectID, common.HexToAddress(address))
+}
+
+// SetAccountMetaURI sets the account metadata. Requires the sender to be a member of the account.
+func (c *Client) SetAccountMetaURI(ctx context.Context, accountID *big.Int, account *valist.AccountMeta) (*types.Transaction, error) {
+	data, err := json.Marshal(account)
 	if err != nil {
 		return nil, err
 	}
@@ -243,254 +302,212 @@ func (c *Client) CreateLicense(ctx context.Context, teamName, projectName, licen
 	if err != nil {
 		return nil, err
 	}
-	return c.license.CreateLicense(txopts, teamName, projectName, licenseName, metaURI, mintPrice)
+	return c.registry.SetAccountMetaURI(txopts, accountID, metaURI)
 }
 
-// MintLicense mints a new license to a recipient.
-func (c *Client) MintLicense(ctx context.Context, teamName, projectName, licenseName, recipient string) (*types.Transaction, error) {
+// SetProjectMetaURI sets the project metadata content ID. Requires the sender to be a member of the account.
+func (c *Client) SetProjectMetaURI(ctx context.Context, projectID *big.Int, project *valist.ProjectMeta) (*types.Transaction, error) {
+	data, err := json.Marshal(project)
+	if err != nil {
+		return nil, err
+	}
+	metaURI, err := c.WriteJSON(ctx, data)
+	if err != nil {
+		return nil, err
+	}
 	txopts, err := c.txopts(ctx)
 	if err != nil {
 		return nil, err
 	}
-	txopts.Value, err = c.GetLicensePrice(ctx, teamName, projectName, licenseName)
-	if err != nil {
-		return nil, err
-	}
-	return c.license.MintLicense(txopts, teamName, projectName, licenseName, common.HexToAddress(recipient))
+	return c.registry.SetProjectMetaURI(txopts, projectID, metaURI)
 }
 
-// AddTeamMember adds a member to the team. Requires the sender to be a member of the team.
-func (c *Client) AddTeamMember(ctx context.Context, teamName string, address string) (*types.Transaction, error) {
+// ApproveRelease adds the senders address to the signers list.
+func (c *Client) ApproveRelease(ctx context.Context, releaseID *big.Int) (*types.Transaction, error) {
 	txopts, err := c.txopts(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return c.valist.AddTeamMember(txopts, teamName, common.HexToAddress(address))
+	return c.registry.ApproveRelease(txopts, releaseID)
 }
 
-// RemoveTeamMember removes a member from the team. Requires the sender to be a member of the team.
-func (c *Client) RemoveTeamMember(ctx context.Context, teamName string, address string) (*types.Transaction, error) {
+// RevokeRelease removes the senders address from the signers list.
+func (c *Client) RevokeRelease(ctx context.Context, releaseID *big.Int) (*types.Transaction, error) {
 	txopts, err := c.txopts(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return c.valist.RemoveTeamMember(txopts, teamName, common.HexToAddress(address))
+	return c.registry.RevokeRelease(txopts, releaseID)
 }
 
-// AddProjectMemeber adds a member to the project. Requires the sender to be a member of the team.
-func (c *Client) AddProjectMember(ctx context.Context, teamName, projectName string, address string) (*types.Transaction, error) {
+// SetProductLimit sets the limit on the total supply of products in the given project.
+func (c *Client) SetProductLimit(ctx context.Context, projectID, limit *big.Int) (*types.Transaction, error) {
 	txopts, err := c.txopts(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return c.valist.AddProjectMember(txopts, teamName, projectName, common.HexToAddress(address))
+	return c.license.SetLimit(txopts, projectID, limit)
 }
 
-// RemoveProjectMember removes a member from the project. Requires the sender to be a member of the team.
-func (c *Client) RemoveProjectMember(ctx context.Context, teamName, projectName string, address string) (*types.Transaction, error) {
+// SetProductRoyalty sets the royalty recipient and amount in basis points for the given project.
+func (c *Client) SetProductRoyalty(ctx context.Context, projectID *big.Int, recipient string, amount *big.Int) (*types.Transaction, error) {
 	txopts, err := c.txopts(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return c.valist.RemoveProjectMember(txopts, teamName, projectName, common.HexToAddress(address))
+	return c.license.SetRoyalty(txopts, projectID, common.HexToAddress(recipient), amount)
 }
 
-// SetTeamMetaURI sets the team metadata content ID. Requires the sender to be a member of the team.
-func (c *Client) SetTeamMetaURI(ctx context.Context, teamName, metaURI string) (*types.Transaction, error) {
+// SetProductPrice sets the price of the product for the given project.
+func (c *Client) SetProductPrice(ctx context.Context, projectID, price *big.Int) (*types.Transaction, error) {
 	txopts, err := c.txopts(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return c.valist.SetTeamMetaURI(txopts, teamName, metaURI)
+	return c.license.SetPrice0(txopts, projectID, price)
 }
 
-// SetProjectMetaURI sets the project metadata content ID. Requires the sender to be a member of the team.
-func (c *Client) SetProjectMetaURI(ctx context.Context, teamName, projectName, metaURI string) (*types.Transaction, error) {
+// SetProductTokenPrice sets the token price of the product for the given project.
+func (c *Client) SetProductTokenPrice(ctx context.Context, token string, projectID, price *big.Int) (*types.Transaction, error) {
 	txopts, err := c.txopts(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return c.valist.SetProjectMetaURI(txopts, teamName, projectName, metaURI)
+	return c.license.SetPrice(txopts, common.HexToAddress(token), projectID, price)
 }
 
-// SetTeamBeneficiary sets the team beneficiary to the new address.
-func (c *Client) SetTeamBeneficiary(ctx context.Context, teamName, beneficiary string) (*types.Transaction, error) {
+// PurchaseProduct purchases the product for the given project on behalf of the recipient.
+func (c *Client) PurchaseProduct(ctx context.Context, projectID *big.Int, recipient string) (*types.Transaction, error) {
+	price, err := c.GetProductPrice(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
 	txopts, err := c.txopts(ctx)
 	if err != nil {
 		return nil, err
 	}
-	teamID, err := c.GetTeamID(ctx, teamName)
+	txopts.Value = price
+	return c.license.Purchase(txopts, projectID, common.HexToAddress(recipient))
+}
+
+// PurchaseProductToken purchases the product for the given project on behalf of the recipient.
+func (c *Client) PurchaseProductToken(ctx context.Context, token string, projectID *big.Int, recipient string) (*types.Transaction, error) {
+	price, err := c.GetProductTokenPrice(ctx, token, projectID)
 	if err != nil {
 		return nil, err
 	}
-	return c.valist.SetTeamBeneficiary(txopts, teamID, common.HexToAddress(beneficiary))
-}
-
-// ApproveRelease approves the release by adding the sender's address to the approvers list.
-// The sender's address will be removed from the rejectors list if it exists.
-func (c *Client) ApproveRelease(ctx context.Context, teamName, projectName, releaseName string) (*types.Transaction, error) {
+	erc20, err := erc20_contract.NewERC20(common.HexToAddress(token), c.rpc)
+	if err != nil {
+		return nil, err
+	}
 	txopts, err := c.txopts(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return c.valist.ApproveRelease(txopts, teamName, projectName, releaseName)
-}
-
-// RejectRelease rejects the release by adding the sender's address to the rejectors list.
-// The sender's address will be removed from the approvers list if it exists.
-func (c *Client) RejectRelease(ctx context.Context, teamName, projectName, releaseName string) (*types.Transaction, error) {
-	txopts, err := c.txopts(ctx)
+	tx, err := erc20.Approve(txopts, c.licenseAddress, price)
 	if err != nil {
 		return nil, err
 	}
-	return c.valist.RejectRelease(txopts, teamName, projectName, releaseName)
-}
-
-// GetLatestReleaseName returns the latest release name.
-func (c *Client) GetLatestReleaseName(ctx context.Context, teamName, projectName string) (string, error) {
-	return c.valist.GetLatestReleaseName(c.callopts(ctx), teamName, projectName)
-}
-
-// GetTeamMetaURI returns the team metadata URI.
-func (c *Client) GetTeamMetaURI(ctx context.Context, teamName string) (string, error) {
-	return c.valist.GetTeamMetaURI(c.callopts(ctx), teamName)
-}
-
-// GetProjectMetaURI returns the project metadata URI.
-func (c *Client) GetProjectMetaURI(ctx context.Context, teamName, projectName string) (string, error) {
-	return c.valist.GetProjectMetaURI(c.callopts(ctx), teamName, projectName)
-}
-
-// GetReleaseMetaURI returns the release metadata URI.
-func (c *Client) GetReleaseMetaURI(ctx context.Context, teamName, projectName, releaseName string) (string, error) {
-	return c.valist.GetReleaseMetaURI(c.callopts(ctx), teamName, projectName, releaseName)
-}
-
-// GetLicenseMetaURI returns the license metadata URI.
-func (c *Client) GetLicenseMetaURI(ctx context.Context, teamName, projectName, licenseName string) (string, error) {
-	return c.license.GetLicenseMetaURI(c.callopts(ctx), teamName, projectName, licenseName)
-}
-
-// GetTeamNames returns a paginated list of team names.
-func (c *Client) GetTeamNames(ctx context.Context, page *big.Int, size *big.Int) ([]string, error) {
-	return c.valist.GetTeamNames(c.callopts(ctx), page, size)
-}
-
-// GetProjectNames returns a paginated list of project names.
-func (c *Client) GetProjectNames(ctx context.Context, teamName string, page *big.Int, size *big.Int) ([]string, error) {
-	return c.valist.GetProjectNames(c.callopts(ctx), teamName, page, size)
-}
-
-// GetReleaseNames returns a paginated list of release names.
-func (c *Client) GetReleaseNames(ctx context.Context, teamName, projectName string, page *big.Int, size *big.Int) ([]string, error) {
-	return c.valist.GetReleaseNames(c.callopts(ctx), teamName, projectName, page, size)
-}
-
-// GetLicenseNames returns a paginated list of license names.
-func (c *Client) GetLicenseNames(ctx context.Context, teamName, projectName string, page *big.Int, size *big.Int) ([]string, error) {
-	return c.license.GetNamesByProjectID(c.callopts(ctx), teamName, projectName, page, size)
-}
-
-// GetTeamMembers returns a paginated list of team members.
-func (c *Client) GetTeamMembers(ctx context.Context, teamName string, page *big.Int, size *big.Int) ([]string, error) {
-	addresses, err := c.valist.GetTeamMembers(c.callopts(ctx), teamName, page, size)
+	_, err = bind.WaitMined(ctx, c.rpc, tx)
 	if err != nil {
 		return nil, err
 	}
-	var members []string
-	for _, address := range addresses {
-		members = append(members, address.Hex())
-	}
-	return members, nil
+	return c.license.Purchase0(txopts, common.HexToAddress(token), projectID, common.HexToAddress(recipient))
 }
 
-// GetProjectMembers returns a paginated list of project members.
-func (c *Client) GetProjectMembers(ctx context.Context, teamName, projectName string, page *big.Int, size *big.Int) ([]string, error) {
-	addresses, err := c.valist.GetProjectMembers(c.callopts(ctx), teamName, projectName, page, size)
-	if err != nil {
-		return nil, err
-	}
-	var members []string
-	for _, address := range addresses {
-		members = append(members, address.Hex())
-	}
-	return members, nil
+// GetProductPrice returns the price of the product for the given project.
+func (c *Client) GetProductPrice(ctx context.Context, projectID *big.Int) (*big.Int, error) {
+	return c.license.GetPrice0(c.callopts(ctx), projectID)
 }
 
-// GetReleaseApprovers returns a paginated list of release approvers.
-func (c *Client) GetReleaseApprovers(ctx context.Context, teamName string, projectName, releaseName string, page *big.Int, size *big.Int) ([]string, error) {
-	addresses, err := c.valist.GetReleaseApprovers(c.callopts(ctx), teamName, projectName, releaseName, page, size)
-	if err != nil {
-		return nil, err
-	}
-	var approvers []string
-	for _, address := range addresses {
-		approvers = append(approvers, address.Hex())
-	}
-	return approvers, nil
+// GetProductTokenPrice returns the token price of the product for the given project.
+func (c *Client) GetProductTokenPrice(ctx context.Context, token string, projectID *big.Int) (*big.Int, error) {
+	return c.license.GetPrice(c.callopts(ctx), common.HexToAddress(token), projectID)
 }
 
-// GetReleaseRejectors returns a paginated list of release rejectors.
-func (c *Client) GetReleaseRejectors(ctx context.Context, teamName string, projectName, releaseName string, page *big.Int, size *big.Int) ([]string, error) {
-	addresses, err := c.valist.GetReleaseRejectors(c.callopts(ctx), teamName, projectName, releaseName, page, size)
-	if err != nil {
-		return nil, err
-	}
-	var rejectors []string
-	for _, address := range addresses {
-		rejectors = append(rejectors, address.Hex())
-	}
-	return rejectors, nil
+// GetProductBalance returns the current balance of the product for the given project.
+func (c *Client) GetProductBalance(ctx context.Context, projectID *big.Int) (*big.Int, error) {
+	return c.license.GetBalance(c.callopts(ctx), projectID)
 }
 
-// GetTeamID generates teamID from name.
-func (c *Client) GetTeamID(ctx context.Context, teamName string) (*big.Int, error) {
-	return c.valist.GetTeamID(c.callopts(ctx), teamName)
+// GetProductTokenBalance returns the current balance of the product for the given project.
+func (c *Client) GetProductTokenBalance(ctx context.Context, token string, projectID *big.Int) (*big.Int, error) {
+	return c.license.GetBalance0(c.callopts(ctx), common.HexToAddress(token), projectID)
 }
 
-// GetProjectID generates projectID from team ID and name.
-func (c *Client) GetProjectID(ctx context.Context, teamID *big.Int, projectName string) (*big.Int, error) {
-	return c.valist.GetProjectID(c.callopts(ctx), teamID, projectName)
+// GetProductLimit returns the limit of supply for the product in the given project.
+func (c *Client) GetProductLimit(ctx context.Context, projectID *big.Int) (*big.Int, error) {
+	return c.license.GetLimit(c.callopts(ctx), projectID)
 }
 
-// GetReleaseID generates releaseID from project ID and name.
-func (c *Client) GetReleaseID(ctx context.Context, projectID *big.Int, releaseName string) (*big.Int, error) {
-	return c.valist.GetReleaseID(c.callopts(ctx), projectID, releaseName)
+// GetProductSupply returns the total supply of the product in the given project.
+func (c *Client) GetProductSupply(ctx context.Context, projectID *big.Int) (*big.Int, error) {
+	return c.license.GetSupply(c.callopts(ctx), projectID)
 }
 
-// GetLicenseID generates licenseID from project ID and name.
-func (c *Client) GetLicenseID(ctx context.Context, projectID *big.Int, licenseName string) (*big.Int, error) {
-	return c.license.GetLicenseID(c.callopts(ctx), projectID, licenseName)
+// ProductRoyaltyInfo returns the royalty recipient and amount owed for product.
+func (c *Client) ProductRoyaltyInfo(ctx context.Context, projectID, price *big.Int) (common.Address, *big.Int, error) {
+	return c.license.RoyaltyInfo(c.callopts(ctx), projectID, price)
 }
 
-// GetLicense price returns the mint price of the license.
-func (c *Client) GetLicensePrice(ctx context.Context, teamName, projectName, licenseName string) (*big.Int, error) {
-	teamID, err := c.GetTeamID(ctx, teamName)
-	if err != nil {
-		return nil, err
-	}
-	projectID, err := c.GetProjectID(ctx, teamID, projectName)
-	if err != nil {
-		return nil, err
-	}
-	licenseID, err := c.GetLicenseID(ctx, projectID, licenseName)
-	if err != nil {
-		return nil, err
-	}
-	return c.license.PriceByID(c.callopts(ctx), licenseID)
+// ProductBalanceOf returns the product balance of the address for the given project.
+func (c *Client) ProductBalanceOf(ctx context.Context, address string, projectID *big.Int) (*big.Int, error) {
+	return c.license.BalanceOf(c.callopts(ctx), common.HexToAddress(address), projectID)
 }
 
-// GetTeamBeneficiary returns the team beneficiary address.
-func (c *Client) GetTeamBeneficiary(ctx context.Context, teamName string) (string, error) {
-	teamID, err := c.GetTeamID(ctx, teamName)
-	if err != nil {
-		return "", err
-	}
-	address, err := c.valist.GetTeamBeneficiary(c.callopts(ctx), teamID)
-	if err != nil {
-		return "", err
-	}
-	return address.Hex(), nil
+// GetAccountMembers returns a list of account members.
+func (c *Client) GetAccountMembers(ctx context.Context, accountID *big.Int) ([]common.Address, error) {
+	return c.registry.GetAccountMembers(c.callopts(ctx), accountID)
+}
+
+// GetProjectMembers returns a list of project members.
+func (c *Client) GetProjectMembers(ctx context.Context, projectID *big.Int) ([]common.Address, error) {
+	return c.registry.GetProjectMembers(c.callopts(ctx), projectID)
+}
+
+// GetReleaseSigners returns a list of release signers.
+func (c *Client) GetReleaseSigners(ctx context.Context, releaseID *big.Int) ([]common.Address, error) {
+	return c.registry.GetReleaseSigners(c.callopts(ctx), releaseID)
+}
+
+// GetLatestReleaseID returns the ID of the latest release for the given project.
+func (c *Client) GetLatestReleaseID(ctx context.Context, projectID *big.Int) (*big.Int, error) {
+	return c.registry.GetLatestReleaseID(c.callopts(ctx), projectID)
+}
+
+// GetPreviousReleaseID returns the ID of the previous release for the given release.
+func (c *Client) GetPreviousReleaseID(ctx context.Context, releaseID *big.Int) (*big.Int, error) {
+	return c.registry.GetPreviousReleaseID(c.callopts(ctx), releaseID)
+}
+
+// GetProjectAccountID returns the ID of the account for the given project.
+func (c *Client) GetProjectAccountID(ctx context.Context, projectID *big.Int) (*big.Int, error) {
+	return c.registry.GetProjectAccountID(c.callopts(ctx), projectID)
+}
+
+// GetReleaseProjectID returns the ID of the project for the given release.
+func (c *Client) GetReleaseProjectID(ctx context.Context, releaseID *big.Int) (*big.Int, error) {
+	return c.registry.GetReleaseProjectID(c.callopts(ctx), releaseID)
+}
+
+// IsAccountMember returns true if the given address is an account member.
+func (c *Client) IsAccountMember(ctx context.Context, accountID *big.Int, address string) (bool, error) {
+	return c.registry.IsAccountMember(c.callopts(ctx), accountID, common.HexToAddress(address))
+}
+
+// IsProjectMember returns true if the given address is a project member.
+func (c *Client) IsProjectMember(ctx context.Context, projectID *big.Int, address string) (bool, error) {
+	return c.registry.IsProjectMember(c.callopts(ctx), projectID, common.HexToAddress(address))
+}
+
+// IsReleaseSigner returns true if the given address is a release signer.
+func (c *Client) IsReleaseSigner(ctx context.Context, releaseID *big.Int, address string) (bool, error) {
+	return c.registry.IsReleaseSigner(c.callopts(ctx), releaseID, common.HexToAddress(address))
+}
+
+// GenerateID returns the ID of the object with the given parentID and name.
+func (c *Client) GenerateID(parentID *big.Int, name string) *big.Int {
+	return utils.GenerateID(parentID, name)
 }
 
 // WriteJSON writes JSON data to storage.
